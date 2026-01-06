@@ -1,0 +1,509 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Slingshot Polygon Ball</title>
+  <style>
+    :root {
+      --bg: #0f1220;
+      --panel: #1b2033;
+      --text: #e8ecff;
+      --accent: #6ad7ff;
+      --accent2: #ffb86b;
+      --line: #9aa7ff;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+    }
+
+    body {
+      background: radial-gradient(circle at top, #1d2340, var(--bg));
+      min-height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    header {
+      width: min(1100px, 95vw);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 10px 8px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    select,
+    button {
+      background: var(--panel);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: 0.2s ease;
+    }
+
+    button:hover,
+    select:hover {
+      border-color: rgba(255, 255, 255, 0.3);
+      transform: translateY(-1px);
+    }
+
+    .stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      font-size: 14px;
+    }
+
+    .stat {
+      background: var(--panel);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      min-width: 120px;
+      box-shadow: 0 8px 20px var(--shadow);
+    }
+
+    .stat span {
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    #game {
+      flex: 1;
+      width: min(1100px, 95vw);
+      height: min(650px, 70vh);
+      border-radius: 20px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+      background: rgba(6, 8, 16, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    footer {
+      width: min(1100px, 95vw);
+      margin: 12px 0 18px;
+      font-size: 13px;
+      color: rgba(232, 236, 255, 0.7);
+      text-align: center;
+    }
+
+    @media (max-width: 700px) {
+      #game {
+        height: 60vh;
+      }
+
+      header {
+        justify-content: center;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="controls">
+      <label for="shapeSelect">Контейнер:</label>
+      <select id="shapeSelect">
+        <option value="square">Квадрат</option>
+        <option value="triangle">Треугольник</option>
+        <option value="pentagon">Пятиугольник</option>
+        <option value="hexagon">Шестиугольник</option>
+      </select>
+      <button id="resetBtn">Reset</button>
+    </div>
+    <div class="stats">
+      <div class="stat">Speed: <span id="speedStat">0</span></div>
+      <div class="stat">Energy: <span id="energyStat">0%</span></div>
+      <div class="stat">Hits: <span id="hitsStat">0</span></div>
+    </div>
+  </header>
+
+  <canvas id="game"></canvas>
+
+  <footer>
+    Подсказка: потяните шар мышью как рогатку, отпустите — он полетит. Меняйте форму контейнера и сбрасывайте игру.
+  </footer>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const shapeSelect = document.getElementById("shapeSelect");
+    const resetBtn = document.getElementById("resetBtn");
+    const speedStat = document.getElementById("speedStat");
+    const energyStat = document.getElementById("energyStat");
+    const hitsStat = document.getElementById("hitsStat");
+
+    const state = {
+      ball: {
+        x: 0,
+        y: 0,
+        vx: 0,
+        vy: 0,
+        r: 16,
+        highlight: 0,
+      },
+      dragging: false,
+      dragX: 0,
+      dragY: 0,
+      dragPower: 0,
+      v0: 1,
+      hits: 0,
+      shape: "square",
+      polygon: [],
+      lastTime: 0,
+    };
+
+    const physics = {
+      g: 900,
+      air: 0.6,
+      bounce: 0.86,
+      friction: 0.03,
+      maxPull: 180,
+      launchScale: 5.2,
+      sleepSpeed: 20,
+    };
+
+    function resize() {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * devicePixelRatio;
+      canvas.height = rect.height * devicePixelRatio;
+      ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+      setShape(state.shape);
+    }
+
+    function polygonPoints(sides, radius, centerX, centerY) {
+      const points = [];
+      const startAngle = -Math.PI / 2;
+      for (let i = 0; i < sides; i += 1) {
+        const angle = startAngle + (i * 2 * Math.PI) / sides;
+        points.push({
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius,
+        });
+      }
+      return points;
+    }
+
+    function setShape(type) {
+      state.shape = type;
+      const centerX = canvas.clientWidth / 2;
+      const centerY = canvas.clientHeight / 2 + 10;
+      const radius = Math.min(canvas.clientWidth, canvas.clientHeight) * 0.38;
+
+      if (type === "square") {
+        state.polygon = polygonPoints(4, radius, centerX, centerY);
+      } else if (type === "triangle") {
+        state.polygon = polygonPoints(3, radius, centerX, centerY);
+      } else if (type === "pentagon") {
+        state.polygon = polygonPoints(5, radius, centerX, centerY);
+      } else {
+        state.polygon = polygonPoints(6, radius, centerX, centerY);
+      }
+
+      resetBall();
+    }
+
+    function resetBall() {
+      const center = getPolygonCenter();
+      state.ball.x = center.x;
+      state.ball.y = center.y;
+      state.ball.vx = 0;
+      state.ball.vy = 0;
+      state.ball.highlight = 0;
+      state.dragging = false;
+      state.v0 = 1;
+      state.hits = 0;
+    }
+
+    function getPolygonCenter() {
+      let x = 0;
+      let y = 0;
+      state.polygon.forEach((p) => {
+        x += p.x;
+        y += p.y;
+      });
+      return {
+        x: x / state.polygon.length,
+        y: y / state.polygon.length,
+      };
+    }
+
+    function init() {
+      resize();
+      window.addEventListener("resize", resize);
+      shapeSelect.addEventListener("change", (e) => setShape(e.target.value));
+      resetBtn.addEventListener("click", resetBall);
+
+      canvas.addEventListener("pointerdown", onPointerDown);
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+
+      requestAnimationFrame(loop);
+    }
+
+    function onPointerDown(event) {
+      const pos = getPointer(event);
+      const dx = pos.x - state.ball.x;
+      const dy = pos.y - state.ball.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= state.ball.r + 6) {
+        state.dragging = true;
+        state.dragX = pos.x;
+        state.dragY = pos.y;
+      }
+    }
+
+    function onPointerMove(event) {
+      if (!state.dragging) return;
+      const pos = getPointer(event);
+      state.dragX = pos.x;
+      state.dragY = pos.y;
+    }
+
+    function onPointerUp() {
+      if (!state.dragging) return;
+      const dx = state.ball.x - state.dragX;
+      const dy = state.ball.y - state.dragY;
+      const distance = Math.hypot(dx, dy);
+      const capped = Math.min(distance, physics.maxPull);
+      const power = capped / physics.maxPull;
+      const dirX = distance === 0 ? 0 : dx / distance;
+      const dirY = distance === 0 ? 0 : dy / distance;
+      const speed = capped * physics.launchScale;
+
+      state.ball.vx = dirX * speed;
+      state.ball.vy = dirY * speed;
+      state.v0 = Math.max(speed, 1);
+      state.dragging = false;
+      state.dragPower = power;
+    }
+
+    function getPointer(event) {
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      };
+    }
+
+    function update(dt) {
+      const ball = state.ball;
+
+      ball.vy += physics.g * dt;
+      ball.vx *= Math.max(0, 1 - physics.air * dt);
+      ball.vy *= Math.max(0, 1 - physics.air * dt);
+
+      ball.x += ball.vx * dt;
+      ball.y += ball.vy * dt;
+
+      resolveCollisions();
+
+      if (ball.highlight > 0) {
+        ball.highlight = Math.max(0, ball.highlight - dt * 3);
+      }
+
+      const speed = Math.hypot(ball.vx, ball.vy);
+      if (speed < physics.sleepSpeed) {
+        ball.vx *= 0.9;
+        ball.vy *= 0.9;
+        if (Math.hypot(ball.vx, ball.vy) < 2) {
+          ball.vx = 0;
+          ball.vy = 0;
+        }
+      }
+    }
+
+    function resolveCollisions() {
+      const ball = state.ball;
+      const points = state.polygon;
+      let hit = false;
+
+      for (let i = 0; i < points.length; i += 1) {
+        const a = points[i];
+        const b = points[(i + 1) % points.length];
+        const collision = circleSegmentCollision(ball, a, b);
+        if (!collision) continue;
+
+        const { nx, ny, penetration } = collision;
+        ball.x += nx * penetration;
+        ball.y += ny * penetration;
+
+        const vn = ball.vx * nx + ball.vy * ny;
+        const tx = -ny;
+        const ty = nx;
+        const vt = ball.vx * tx + ball.vy * ty;
+
+        const newVn = -physics.bounce * vn;
+        const newVt = vt * (1 - physics.friction);
+
+        ball.vx = newVn * nx + newVt * tx;
+        ball.vy = newVn * ny + newVt * ty;
+        hit = true;
+      }
+
+      if (hit) {
+        state.hits += 1;
+        ball.highlight = 1;
+      }
+    }
+
+    function circleSegmentCollision(ball, a, b) {
+      const abx = b.x - a.x;
+      const aby = b.y - a.y;
+      const apx = ball.x - a.x;
+      const apy = ball.y - a.y;
+      const abLenSq = abx * abx + aby * aby;
+      const t = abLenSq === 0 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLenSq));
+      const closestX = a.x + abx * t;
+      const closestY = a.y + aby * t;
+      const dx = ball.x - closestX;
+      const dy = ball.y - closestY;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist >= ball.r) return null;
+
+      const nx = dist === 0 ? 0 : dx / dist;
+      const ny = dist === 0 ? -1 : dy / dist;
+      return {
+        nx,
+        ny,
+        penetration: ball.r - dist + 0.2,
+      };
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      drawPolygon();
+      drawDrag();
+      drawBall();
+      updateUI();
+    }
+
+    function drawPolygon() {
+      if (!state.polygon.length) return;
+      ctx.save();
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "rgba(154, 167, 255, 0.9)";
+      ctx.shadowColor = "rgba(106, 215, 255, 0.4)";
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      state.polygon.forEach((point, index) => {
+        if (index === 0) {
+          ctx.moveTo(point.x, point.y);
+        } else {
+          ctx.lineTo(point.x, point.y);
+        }
+      });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawBall() {
+      const ball = state.ball;
+      const gradient = ctx.createRadialGradient(
+        ball.x - ball.r * 0.4,
+        ball.y - ball.r * 0.4,
+        ball.r * 0.3,
+        ball.x,
+        ball.y,
+        ball.r * 1.4
+      );
+      gradient.addColorStop(0, "rgba(255, 255, 255, 0.95)");
+      gradient.addColorStop(0.4, "#6ad7ff");
+      gradient.addColorStop(1, "#355b8e");
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.fillStyle = gradient;
+      ctx.shadowColor = `rgba(255, 184, 107, ${0.6 * ball.highlight})`;
+      ctx.shadowBlur = 20 * ball.highlight;
+      ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    function drawDrag() {
+      if (!state.dragging) return;
+      const ball = state.ball;
+      const dx = state.dragX - ball.x;
+      const dy = state.dragY - ball.y;
+      const distance = Math.hypot(dx, dy);
+      const capped = Math.min(distance, physics.maxPull);
+      const power = capped / physics.maxPull;
+      const dirX = distance === 0 ? 0 : dx / distance;
+      const dirY = distance === 0 ? 0 : dy / distance;
+      const lineX = ball.x + dirX * capped;
+      const lineY = ball.y + dirY * capped;
+
+      ctx.save();
+      ctx.strokeStyle = "rgba(255, 184, 107, 0.9)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(lineX, lineY);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255, 184, 107, 0.9)";
+      ctx.beginPath();
+      ctx.arc(lineX, lineY, 5, 0, Math.PI * 2);
+      ctx.fill();
+
+      const arrowLength = 20;
+      const arrowX = ball.x - dirX * arrowLength;
+      const arrowY = ball.y - dirY * arrowLength;
+      ctx.strokeStyle = "rgba(106, 215, 255, 0.85)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(ball.x, ball.y);
+      ctx.lineTo(arrowX, arrowY);
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.font = "14px 'Segoe UI', sans-serif";
+      ctx.fillText(`Power ${(power * 100).toFixed(0)}%`, lineX + 12, lineY - 10);
+      ctx.restore();
+    }
+
+    function updateUI() {
+      const speed = Math.hypot(state.ball.vx, state.ball.vy);
+      speedStat.textContent = speed.toFixed(0);
+      const energy = Math.min(1, speed / state.v0);
+      energyStat.textContent = `${(energy * 100).toFixed(0)}%`;
+      hitsStat.textContent = state.hits;
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = Math.min(0.032, (timestamp - state.lastTime) / 1000);
+      state.lastTime = timestamp;
+
+      if (!state.dragging) {
+        update(dt);
+      }
+
+      render();
+      requestAnimationFrame(loop);
+    }
+
+    init();
+  </script>
+</body>
+</html>
